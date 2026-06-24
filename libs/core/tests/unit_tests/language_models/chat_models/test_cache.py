@@ -101,6 +101,44 @@ async def test_local_cache_async() -> None:
         set_llm_cache(None)
 
 
+class SizedInMemoryCache(InMemoryCache):
+    """In-memory cache that reports its size via ``__len__``.
+
+    Many real cache implementations expose their entry count this way, which makes
+    an empty cache falsy. Used to guard against truthiness checks being used where
+    an identity check is intended.
+    """
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+
+def test_local_cache_sized_cache_sync() -> None:
+    """A cache that defines ``__len__`` must still be used by the chat model.
+
+    Regression test: `_generate_with_cache` gated caching on `self.cache` and
+    `llm_cache` truthiness, so an empty cache reporting `len() == 0` was treated
+    as absent and caching was silently skipped.
+    """
+    local_cache = SizedInMemoryCache()
+    assert len(local_cache) == 0  # empty -> falsy
+    chat_model = FakeListChatModel(cache=local_cache, responses=["hello", "goodbye"])
+    assert chat_model.invoke("How are you?").content == "hello"
+    # Second call must be served from the cache, not return "goodbye".
+    assert chat_model.invoke("How are you?").content == "hello"
+    assert len(local_cache._cache) == 1
+
+
+async def test_local_cache_sized_cache_async() -> None:
+    """Async counterpart of `test_local_cache_sized_cache_sync`."""
+    local_cache = SizedInMemoryCache()
+    assert len(local_cache) == 0  # empty -> falsy
+    chat_model = FakeListChatModel(cache=local_cache, responses=["hello", "goodbye"])
+    assert (await chat_model.ainvoke("How are you?")).content == "hello"
+    assert (await chat_model.ainvoke("How are you?")).content == "hello"
+    assert len(local_cache._cache) == 1
+
+
 def test_global_cache_sync() -> None:
     """Test that the global cache gets populated when cache = True."""
     global_cache = InMemoryCache()
